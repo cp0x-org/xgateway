@@ -1,0 +1,105 @@
+# x402 config — required when any rule uses scheme "exact" or "upto".
+x402:
+  - name: "x402-base-exact"
+    facilitator_url: "https://x402.org/facilitator"
+    network: "eip155:84532"                               # Base Sepolia (CAIP-2)
+    scheme: "exact"                                       # Default x402 scheme for rules that don't specify one.
+    sync_facilitator_on_start: true
+    timeout_seconds: 30
+    merchant: "0x30F61d67d9db6787bC3B83A6A9ef093ef140140D" #pay_to address
+    asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e" # USDC on Base Mainnet (CAIP-19)
+    decimals: 6                                              # USDC has 6 decimal places
+#    asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" # ???? USDC on Base Mainnet (CAIP-19)
+
+outbound:
+  target: "http://localhost:4021"
+  allow_unmatched: false                                  # false = 403 for unconfigured routes; true = proxy freely
+  auth_header:
+    enable: true # true | false
+    name: ""
+    value: "Bearer YOUR_UPSTREAM_ACCESS_TOKEN"
+  rules:
+    # Bazaar discovery is auto-generated for every paid rule with no `bazaar:` block
+    # (minimal GET declaration, empty schema). Add `bazaar:` to publish a richer
+    # contract — input/output examples and JSON schemas — to facilitator catalogs.
+    - name: "health"
+      path: "/health"
+      price: "1000"                                       # $0.001 USDC (6 decimals)
+      description: "Service health probe"
+      bazaar:
+        method: GET
+        output_example:
+          status: "ok"
+          timestamp: "2026-05-29T12:00:00Z"
+    - name: "metered-api"
+      path: "/api/metered/*"
+      price: "12000000"                                   # $0.10 USDC (6 decimals); maximum authorized amount
+      description: "Metered API billed by actual usage"
+      bazaar:
+        method: GET                                       # wildcard route — Bazaar auto-names path segments var1, var2, ...
+        output_example:
+          path: "/api/metered/sample"
+          units_used: 5
+          cost_usd: 0.05
+          data: "mock metered response"
+    - name: "weather"
+      path: "/weather"
+      price: "100000"                                     # $0.10 USDC (6 decimals)
+      # NOTE: rule-level `description` ends up in the top-level `Resource.Description`
+      # of the 402 response — Bazaar catalogs display this as the endpoint's headline.
+      # HTTP Bazaar discovery itself has no separate `description` field in `info`;
+      # use JSON Schema's standard `description` inside input_schema / output_schema
+      # to describe the payload shape.
+      description: "Current weather for a city — returns temperature, condition, and humidity"
+      payment_methods: [ "x402-base-exact" ]
+      bazaar:
+        # ----- All supported BazaarConfig fields ---------------------------------
+        disabled: false                                   # set true to skip Bazaar discovery for this route
+        method: GET                                       # GET | HEAD | DELETE (query-style) or POST | PUT | PATCH (body-style).
+                                                          # Server-side EnrichDeclaration also rewrites this to the actual request method.
+        body_type: ""                                     # "json" | "form-data" | "text" — only for POST/PUT/PATCH; ignored for GET-family
+        # input_example: a concrete sample input. For GET it becomes queryParams;
+        # for POST/PUT/PATCH it becomes the request body example.
+        input_example:
+          city: "Kyiv"
+        # input_schema: JSON Schema validating the input. Top-level `description`
+        # documents the input as a whole; per-property `description` documents fields.
+        input_schema:
+          description: "Query parameters accepted by the weather endpoint"
+          properties:
+            city:
+              type: string
+              description: "City name; defaults to a random sample when omitted"
+              examples: ["Kyiv", "London", "Tokyo"]
+          required: []
+          additionalProperties: false
+        # output_example: a concrete sample response body
+        output_example:
+          city: "Kyiv"
+          temperature: 18
+          unit: "celsius"
+          condition: "sunny"
+          humidity: 55
+        # output_schema: JSON Schema describing the response shape
+        output_schema:
+          description: "Weather report returned by the endpoint"
+          type: object
+          properties:
+            city: { type: string, description: "Resolved city name" }
+            temperature: { type: integer, description: "Temperature value" }
+            unit: { type: string, enum: ["celsius", "fahrenheit"] }
+            condition: { type: string, enum: ["sunny", "cloudy", "rainy", "windy"] }
+            humidity: { type: integer, minimum: 0, maximum: 100 }
+          required: ["city", "temperature", "unit", "condition", "humidity"]
+    - name: "free-endpoint"
+      path: "/free-endpoint"
+      free: true
+      description: "Free endpoint, no payment required"
+    - name: "free-multipoint"
+      path: "/free-multipoint"
+      free: true
+      description: "Free multipoint root, no payment required"
+    - name: "free-multipoint-sub"
+      path: "/free-multipoint/*"
+      free: true
+      description: "Free multipoint with subpath, no payment required"
