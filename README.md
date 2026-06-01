@@ -1,8 +1,12 @@
 # xgateway
 
-HTTP reverse proxy that enforces [x402](https://www.x402.org/) and [MPP](https://github.com/tempoxyz/mpp-go) payment rules before forwarding requests to an upstream service.
+HTTP reverse proxy that enforces [x402](https://www.x402.org/) payment rules before forwarding requests to an upstream service.
 
 A request without a valid payment proof is answered with `HTTP 402` and the payment requirements. Once the client retries with a verified proof, the gateway settles the payment and proxies the request upstream.
+
+xgateway is used standalone or as the proxy component of the [xpaywall](https://github.com/cp0x-org/xpaywall) stack (where it is consumed as a Git submodule).
+
+> **Payment protocol support:** Only **x402** (`exact` and `upto` schemes) is shipped in the current build. **MPP / Tempo** support is scaffolded in the code but disabled. **Stripe** is on the roadmap.
 
 ## Run
 
@@ -30,14 +34,16 @@ Two configuration sources are supported, selected by the `CONFIG_PROVIDER` env v
 | `PORT` | `8080` | Listen port. |
 | `GIN_MODE` | `release` | Gin mode (`debug` / `release`). |
 | `DEBUG` | `false` | Verbose proxy logging. |
+| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN`, `ERROR`. |
 | `CONTROL_API_URL` | — | Required when `CONFIG_PROVIDER=http`. |
 | `INTERNAL_API_KEY` | — | Required when `CONFIG_PROVIDER=http`; sent as `X-Api-Key`. |
+| `PUBLIC_URL` | — | Override the public-facing URL injected into 402 responses. |
 
 `--env-file <path>` loads variables from a dotenv file before parsing. `.env` in the working directory is loaded automatically when present.
 
 ### File config
 
-Copy [`config.example.yaml`](./config.example.yaml) to `config.yaml` and edit. The config has three top-level sections:
+Copy [`config.example.yaml`](./config.example.yaml) to `config.yaml` and edit. The config has two top-level sections:
 
 ```yaml
 # 1. x402 payment channels (one entry per facilitator / scheme).
@@ -51,16 +57,7 @@ x402:
     sync_facilitator_on_start: true
     timeout_seconds: 30
 
-# 2. MPP payment channels (optional).
-mpp:
-  - name: "tempo-charge-usdc"
-    method: "tempo"                          # tempo | stripe
-    scheme: "charge"                         # charge | session
-    rpc_url: "http://localhost:4022"
-    merchant: "0xEb6ae6fA22D307Eae06BE0862087FdFFdD25Bab4"
-    asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
-
-# 3. Upstream target and the routes the gateway protects.
+# 2. Upstream target and the routes the gateway protects.
 outbound:
   target: "http://localhost:4021"
   allow_unmatched: false                     # true = proxy unmatched paths without payment
@@ -72,7 +69,7 @@ outbound:
     - name: "weather"
       path: "/weather"
       price: "$0.10"
-      payment_methods: ["x402-base-exact"]   # references x402[].name / mpp[].name
+      payment_methods: ["x402-base-exact"]   # references x402[].name
     - name: "metered-api"
       path: "/api/metered/*"
       price: "$0.10"                         # maximum authorized amount for `upto` scheme
@@ -81,7 +78,7 @@ outbound:
       free: true
 ```
 
-Route paths support `*` glob suffixes. A rule with no `payment_methods` accepts every channel defined in `x402:` and `mpp:`.
+Route paths support `*` glob suffixes. A rule with no `payment_methods` accepts every channel defined in `x402:`.
 
 ## Docker
 
@@ -99,3 +96,11 @@ docker run --rm -p 8080:8080 \
 go test ./...
 golangci-lint run
 ```
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the dev setup, PR checklist, and how changes flow back into the xpaywall stack.
+
+## License
+
+Released under the [MIT License](LICENSE).
