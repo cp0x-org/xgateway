@@ -8,6 +8,47 @@ xgateway is used standalone or as the proxy component of the [xpaywall](https://
 
 > **Payment protocol support:** Only **x402** (`exact`) is shipped in the current build. Other schemes and protocols (e.g. `upto`, MPP, Tempo) are on the roadmap but not yet available.
 
+---
+
+## Why xgateway
+
+Monetising an HTTP API usually means bolting on a billing system, issuing API keys, running a subscription database, and writing the per-request accounting code yourself. xgateway replaces all of that with a single drop-in proxy:
+
+- **Charge per request, not per month.** Every call is a discrete on-chain payment — there are no accounts, no invoices, no subscriptions to cancel. Clients pay only for what they use, you get paid the moment the call is made.
+- **No client signup, no keys to manage.** A caller does not need to register with you. They just hit the URL — xgateway answers `HTTP 402` with the payment requirements, the client pays on-chain and retries, and the request goes through. The contract between you and the caller is the route price.
+- **Drop it in front of any API.** Your upstream service does not need to know xgateway exists. Point the gateway at `http://your-api:port`, define which paths cost what, and the gateway handles payment verification, settlement, and proxying. No code change in the upstream.
+- **Per-route pricing and free paths.** Each route has its own price. Mark health checks or auth endpoints as `free: true` and they bypass payment entirely.
+- **Bring-your-own facilitator.** x402 settlement is delegated to a facilitator URL of your choice — run your own or use a public one. The gateway is not tied to any single provider.
+- **Self-hosted, MIT-licensed, Go-native.** One static binary, one config file (or one control-api URL). Run it in Docker, on bare metal, behind your existing reverse proxy — wherever fits.
+
+### Where it sits
+
+```
+Client ──HTTP──▶ xgateway (handle payments) ──HTTP──▶ Upstream API
+                    │
+                    ├── (HTTP mode) ──▶ control-api ──▶ PostgreSQL
+                    │
+                    └── (file mode) ──▶ config.yaml on disk
+```
+
+Every request follows the top row. The bottom row is how xgateway gets its rules — that part happens at different cadences depending on the mode.
+
+
+### Two ways to configure routes
+
+xgateway loads its routes from one of two providers, selected at boot by the `CONFIG_PROVIDER` env var:
+
+| Provider | When to use |
+|---|---|
+| **`file`** (default) | A single project, a static list of routes, no admin UI needed. Routes and payment channels live in a local `config.yaml`. Reload requires a restart. |
+| **`http`** | Multiple projects, routes that change at runtime, or a central admin panel. The gateway calls a remote control API (`CONTROL_API_URL`) per request to resolve the rule for the inbound path. Live changes apply on the next request — no restart. |
+
+The `http` provider is what the full [xpaywall](https://github.com/cp0x-org/xpaywall) stack uses: a control-api service holds routes, projects, payment configuration and request logs in PostgreSQL, an admin panel manages them, and xgateway just enforces payment in front of the upstream. You can also point the `http` provider at your own backend that implements `GET /proxy/resolve/*path` if you do not want to run control-api.
+
+📖 **Full proxy overview and architecture:** <http://xpaywall.cp0x.com/docs/xgateway/overview>
+
+---
+
 ## Run
 
 ```bash
