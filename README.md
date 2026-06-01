@@ -6,7 +6,7 @@ A request without a valid payment proof is answered with `HTTP 402` and the paym
 
 xgateway is used standalone or as the proxy component of the [xpaywall](https://github.com/cp0x-org/xpaywall) stack (where it is consumed as a Git submodule).
 
-> **Payment protocol support:** Only **x402** (`exact` and `upto` schemes) is shipped in the current build. **MPP / Tempo** support is scaffolded in the code but disabled. **Stripe** is on the roadmap.
+> **Payment protocol support:** Only **x402** (`exact`) is shipped in the current build. Other schemes and protocols (e.g. `upto`, MPP, Tempo) are on the roadmap but not yet available.
 
 ## Run
 
@@ -88,13 +88,6 @@ docker run --rm -p 8080:8080 \
   -v "$PWD/config.yaml:/app/config.yaml:ro" \
   -e CONFIG_FILE=/app/config.yaml \
   xgateway
-```
-
-## Test
-
-```bash
-go test ./...
-golangci-lint run
 ```
 
 ## Contributing
