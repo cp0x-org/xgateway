@@ -63,11 +63,11 @@ func TestDefaultPaymentMethodNamesSkipsUnsupportedDefinitions(t *testing.T) {
 		Scheme:         "exact",
 		Merchant:       "0xabc",
 	}}
-	//cfg.MPP = []MPPMethod{
-	//	{Name: "tempo-charge", Method: "tempo", Scheme: "charge", Merchant: "0xabc"},
-	//	{Name: "tempo-session", Method: "tempo", Scheme: "session", Merchant: "0xabc"},
-	//	{Name: "stripe-charge", Method: "stripe", Scheme: "charge", Merchant: "acct_123"},
-	//}
+	cfg.MPP = []MPPMethod{
+		{Name: "tempo-charge", Method: "tempo", Scheme: "charge", Merchant: "0xabc"},
+		{Name: "tempo-session", Method: "tempo", Scheme: "session", Merchant: "0xabc"},
+		{Name: "stripe-charge", Method: "stripe", Scheme: "charge", Merchant: "acct_123"},
+	}
 	ApplyDefaults(cfg)
 
 	got := cfg.DefaultPaymentMethodNames()

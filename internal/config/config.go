@@ -25,13 +25,14 @@ const (
 const (
 	defaultX402Timeout  = 30
 	defaultMPPTimeout   = 30
+	defaultMPPDecimals  = 6
 	defaultMPPSecretKey = "xgateway-dev-secret"
 	defaultAuthHeader   = "Authorization"
 )
 
 type Config struct {
-	X402 []X402Method `json:"x402" yaml:"x402" mapstructure:"x402"`
-	//MPP      []MPPMethod    `json:"mpp" yaml:"mpp" mapstructure:"mpp"`
+	X402     []X402Method   `json:"x402" yaml:"x402" mapstructure:"x402"`
+	MPP      []MPPMethod    `json:"mpp" yaml:"mpp" mapstructure:"mpp"`
 	Outbound OutboundConfig `json:"outbound" yaml:"outbound" mapstructure:"outbound"`
 }
 
@@ -60,16 +61,17 @@ type X402Method struct {
 	Decimals               int32  `json:"decimals" yaml:"decimals" mapstructure:"decimals"`
 }
 
-//type MPPMethod struct {
-//	Name           string `json:"name" yaml:"name" mapstructure:"name"`
-//	Method         string `json:"method" yaml:"method" mapstructure:"method"`
-//	RPCURL         string `json:"rpc_url" yaml:"rpc_url" mapstructure:"rpc_url"`
-//	Scheme         string `json:"scheme" yaml:"scheme" mapstructure:"scheme"`
-//	TimeoutSeconds int    `json:"timeout_seconds" yaml:"timeout_seconds" mapstructure:"timeout_seconds"`
-//	Merchant       string `json:"merchant" yaml:"merchant" mapstructure:"merchant"`
-//	Asset          string `json:"asset" yaml:"asset" mapstructure:"asset"`
-//	SecretKey      string `json:"secret_key" yaml:"secret_key" mapstructure:"secret_key"`
-//}
+type MPPMethod struct {
+	Name           string `json:"name" yaml:"name" mapstructure:"name"`
+	Method         string `json:"method" yaml:"method" mapstructure:"method"`
+	RPCURL         string `json:"rpc_url" yaml:"rpc_url" mapstructure:"rpc_url"`
+	Scheme         string `json:"scheme" yaml:"scheme" mapstructure:"scheme"`
+	TimeoutSeconds int    `json:"timeout_seconds" yaml:"timeout_seconds" mapstructure:"timeout_seconds"`
+	Merchant       string `json:"merchant" yaml:"merchant" mapstructure:"merchant"`
+	Asset          string `json:"asset" yaml:"asset" mapstructure:"asset"`
+	Decimals       int32  `json:"decimals" yaml:"decimals" mapstructure:"decimals"`
+	SecretKey      string `json:"secret_key" yaml:"secret_key" mapstructure:"secret_key"`
+}
 
 type Rule struct {
 	Name           string        `json:"name" yaml:"name" mapstructure:"name"`
@@ -99,12 +101,11 @@ type BazaarConfig struct {
 type ResolvedPaymentMethod struct {
 	Name string
 	X402 *X402Method
-	//MPP  *MPPMethod
+	MPP  *MPPMethod
 }
 
 func (m ResolvedPaymentMethod) IsX402() bool { return m.X402 != nil }
-
-//func (m ResolvedPaymentMethod) IsMPP() bool  { return m.MPP != nil }
+func (m ResolvedPaymentMethod) IsMPP() bool  { return m.MPP != nil }
 
 func Load(configPath string) (*Config, error) {
 	if configPath == "" {
@@ -150,23 +151,26 @@ func ApplyDefaults(cfg *Config) {
 		}
 	}
 
-	//for i := range cfg.MPP {
-	//	if cfg.MPP[i].Name == "" {
-	//		cfg.MPP[i].Name = fmt.Sprintf("mpp-%d", i+1)
-	//	}
-	//	if NormalizeMethod(cfg.MPP[i].Method) == "" {
-	//		cfg.MPP[i].Method = MPPMethodTempo
-	//	}
-	//	if NormalizeScheme(cfg.MPP[i].Scheme) == "" {
-	//		cfg.MPP[i].Scheme = SchemeCharge
-	//	}
-	//	if cfg.MPP[i].TimeoutSeconds <= 0 {
-	//		cfg.MPP[i].TimeoutSeconds = defaultMPPTimeout
-	//	}
-	//	if strings.TrimSpace(cfg.MPP[i].SecretKey) == "" {
-	//		cfg.MPP[i].SecretKey = defaultMPPSecretKey
-	//	}
-	//}
+	for i := range cfg.MPP {
+		if cfg.MPP[i].Name == "" {
+			cfg.MPP[i].Name = fmt.Sprintf("mpp-%d", i+1)
+		}
+		if NormalizeMethod(cfg.MPP[i].Method) == "" {
+			cfg.MPP[i].Method = MPPMethodTempo
+		}
+		if NormalizeScheme(cfg.MPP[i].Scheme) == "" {
+			cfg.MPP[i].Scheme = SchemeCharge
+		}
+		if cfg.MPP[i].TimeoutSeconds <= 0 {
+			cfg.MPP[i].TimeoutSeconds = defaultMPPTimeout
+		}
+		if cfg.MPP[i].Decimals <= 0 {
+			cfg.MPP[i].Decimals = defaultMPPDecimals
+		}
+		if strings.TrimSpace(cfg.MPP[i].SecretKey) == "" {
+			cfg.MPP[i].SecretKey = defaultMPPSecretKey
+		}
+	}
 }
 
 func Validate(cfg *Config) error {
@@ -224,18 +228,21 @@ func validate(cfg *Config, requireUpstream bool) error {
 		}
 	}
 
-	//for i, method := range cfg.MPP {
-	//	field := fmt.Sprintf("mpp[%d]", i)
-	//	if strings.TrimSpace(method.Name) == "" {
-	//		return fmt.Errorf("%s.name is required", field)
-	//	}
-	//	if strings.TrimSpace(method.Merchant) == "" {
-	//		return fmt.Errorf("%s.merchant is required", field)
-	//	}
-	//	if err := validateMPPSchemeValue(method.Scheme, field+".scheme", false); err != nil {
-	//		return err
-	//	}
-	//}
+	for i, method := range cfg.MPP {
+		field := fmt.Sprintf("mpp[%d]", i)
+		if strings.TrimSpace(method.Name) == "" {
+			return fmt.Errorf("%s.name is required", field)
+		}
+		if strings.TrimSpace(method.Merchant) == "" {
+			return fmt.Errorf("%s.merchant is required", field)
+		}
+		if NormalizeMethod(method.Method) != MPPMethodTempo {
+			return fmt.Errorf("%s.method must be %q, got %q", field, MPPMethodTempo, method.Method)
+		}
+		if err := validateMPPSchemeValue(method.Scheme, field+".scheme", false); err != nil {
+			return err
+		}
+	}
 
 	for i, rule := range cfg.Outbound.Rules {
 		field := fmt.Sprintf("outbound.rules[%d]", i)
@@ -280,18 +287,17 @@ func (cfg *Config) DefaultPaymentMethodNames() []string {
 		return nil
 	}
 
-	//names := make([]string, 0, len(cfg.X402)+len(cfg.MPP))
-	names := make([]string, 0, len(cfg.X402))
+	names := make([]string, 0, len(cfg.X402)+len(cfg.MPP))
 	for _, method := range cfg.X402 {
 		if isSupportedX402Method(method) {
 			names = append(names, method.Name)
 		}
 	}
-	//for _, method := range cfg.MPP {
-	//	if isSupportedMPPMethod(method) {
-	//		names = append(names, method.Name)
-	//	}
-	//}
+	for _, method := range cfg.MPP {
+		if isSupportedMPPMethod(method) {
+			names = append(names, method.Name)
+		}
+	}
 	return names
 }
 
@@ -334,14 +340,14 @@ func (cfg *Config) ResolvePaymentMethod(name string) (ResolvedPaymentMethod, err
 		}
 	}
 
-	//for i := range cfg.MPP {
-	//	if cfg.MPP[i].Name == normalized {
-	//		if !isSupportedMPPMethod(cfg.MPP[i]) {
-	//			return ResolvedPaymentMethod{}, fmt.Errorf("payment method %q is not supported", normalized)
-	//		}
-	//		return ResolvedPaymentMethod{Name: normalized, MPP: &cfg.MPP[i]}, nil
-	//	}
-	//}
+	for i := range cfg.MPP {
+		if cfg.MPP[i].Name == normalized {
+			if !isSupportedMPPMethod(cfg.MPP[i]) {
+				return ResolvedPaymentMethod{}, fmt.Errorf("payment method %q is not supported", normalized)
+			}
+			return ResolvedPaymentMethod{Name: normalized, MPP: &cfg.MPP[i]}, nil
+		}
+	}
 
 	return ResolvedPaymentMethod{}, fmt.Errorf("payment method %q is not defined", normalized)
 }
@@ -355,9 +361,9 @@ func isSupportedX402Method(method X402Method) bool {
 	}
 }
 
-//func isSupportedMPPMethod(method MPPMethod) bool {
-//	return NormalizeMethod(method.Method) == MPPMethodTempo && NormalizeScheme(method.Scheme) == SchemeCharge
-//}
+func isSupportedMPPMethod(method MPPMethod) bool {
+	return NormalizeMethod(method.Method) == MPPMethodTempo && NormalizeScheme(method.Scheme) == SchemeCharge
+}
 
 func validateX402SchemeValue(value, field string, allowEmpty bool) error {
 	scheme := NormalizeScheme(value)

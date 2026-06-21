@@ -96,19 +96,20 @@ func resolveChannels(cfg *config.Config, rule config.Rule) []*PaymentChannel {
 					"asset":           m.X402.Asset,
 				},
 			})
-			//case m.IsMPP():
-			//	channels = append(channels, &PaymentChannel{
-			//		Protocol: "mpp",
-			//		Method:   m.MPP.Method,
-			//		Scheme:   m.MPP.Scheme,
-			//		Enabled:  true,
-			//		ChannelConfig: map[string]string{
-			//			"rpc_url":    m.MPP.RPCURL,
-			//			"merchant":   m.MPP.Merchant,
-			//			"asset":      m.MPP.Asset,
-			//			"secret_key": m.MPP.SecretKey,
-			//		},
-			//	})
+		case m.IsMPP():
+			channels = append(channels, &PaymentChannel{
+				Protocol: "mpp",
+				Method:   m.MPP.Method,
+				Scheme:   m.MPP.Scheme,
+				Decimals: m.MPP.Decimals,
+				Enabled:  true,
+				ChannelConfig: map[string]string{
+					"rpc_url":    m.MPP.RPCURL,
+					"merchant":   m.MPP.Merchant,
+					"asset":      m.MPP.Asset,
+					"secret_key": m.MPP.SecretKey,
+				},
+			})
 		}
 	}
 	return channels

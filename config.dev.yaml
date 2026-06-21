@@ -11,6 +11,19 @@ x402:
     decimals: 6                                              # USDC has 6 decimal places
 #    asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" # ???? USDC on Base Mainnet (CAIP-19)
 
+# mpp config — required when any rule uses an MPP method. Only the Tempo
+# "charge" scheme (one-time payments) is supported; "session" is rejected.
+mpp:
+  - name: "mpp-tempo-charge"
+    method: "tempo"                                       # only "tempo" is supported
+    scheme: "charge"                                      # one-time charge only (no session)
+    rpc_url: "https://rpc.moderato.tempo.xyz"             # Tempo testnet (Moderato) JSON-RPC
+    timeout_seconds: 30
+    merchant: "0xb7Ac41661288791225d66643a7d952e551FC7868" # recipient (payee) address
+    decimals: 6                                           # base-unit precision of route `price`
+    asset: "0x20c0000000000000000000000000000000000000"   # pathUSD (Tempo stablecoin)
+    secret_key: "xgateway-dev-secret"                     # HMAC key signing 402 challenges
+
 outbound:
   target: "http://localhost:4021"
   allow_unmatched: false                                  # false = 403 for unconfigured routes; true = proxy freely
@@ -19,13 +32,15 @@ outbound:
     name: ""
     value: "Bearer YOUR_UPSTREAM_ACCESS_TOKEN"
   rules:
-    # Bazaar discovery is auto-generated for every paid rule with no `bazaar:` block
-    # (minimal GET declaration, empty schema). Add `bazaar:` to publish a richer
-    # contract — input/output examples and JSON schemas — to facilitator catalogs.
+    # Bazaar discovery is auto-generated for every paid x402 rule with no `bazaar:`
+    # block (minimal GET declaration, empty schema). Add `bazaar:` to publish a
+    # richer contract — input/output examples and JSON schemas — to facilitator
+    # catalogs. Bazaar applies to x402 only; MPP rules ignore it.
     - name: "health"
       path: "/health"
       price: "1000"                                       # $0.001 USDC (6 decimals)
       description: "Service health probe"
+      payment_methods: [ "x402-base-exact" ]
       bazaar:
         method: GET
         output_example:
@@ -35,6 +50,7 @@ outbound:
       path: "/api/metered/*"
       price: "12000000"                                   # $0.10 USDC (6 decimals); maximum authorized amount
       description: "Metered API billed by actual usage"
+      payment_methods: [ "x402-base-exact" ]
       bazaar:
         method: GET                                       # wildcard route — Bazaar auto-names path segments var1, var2, ...
         output_example:
@@ -51,7 +67,9 @@ outbound:
       # use JSON Schema's standard `description` inside input_schema / output_schema
       # to describe the payload shape.
       description: "Current weather for a city — returns temperature, condition, and humidity"
-      payment_methods: [ "x402-base-exact" ]
+      # This route accepts EITHER protocol. The gateway selects MPP when the client
+      # sends an MPP `Authorization` header, and x402 otherwise.
+      payment_methods: [ "x402-base-exact", "mpp-tempo-charge" ]
       bazaar:
         # ----- All supported BazaarConfig fields ---------------------------------
         disabled: false                                   # set true to skip Bazaar discovery for this route
@@ -91,6 +109,11 @@ outbound:
             condition: { type: string, enum: ["sunny", "cloudy", "rainy", "windy"] }
             humidity: { type: integer, minimum: 0, maximum: 100 }
           required: ["city", "temperature", "unit", "condition", "humidity"]
+    - name: "mpp-charge"
+      path: "/http-endpoint"
+      price: "10000"                                      # $0.01 (6 decimals) -> MPP charge "0.010000"
+      description: "Endpoint paid via MPP Tempo charge"
+      payment_methods: [ "mpp-tempo-charge" ]
     - name: "free-endpoint"
       path: "/free-endpoint"
       free: true

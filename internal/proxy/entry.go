@@ -20,24 +20,30 @@ import (
 )
 
 // entry is the per-route resource bundle resolved on first request and cached.
-// Exactly one of x402/mpp may be nil when that protocol is not configured.
+// Either or both of x402/mpp may be nil when that protocol is not configured.
 type entry struct {
 	rule   rules.Rule
 	rp     *httputil.ReverseProxy
 	x402   *x402Protocol
+	mpp    *mppProtocol
 	scheme string
 }
 
 func (e *entry) hasPayment() bool {
-	return e.x402 != nil
+	return e.x402 != nil || e.mpp != nil
 }
 
 // runPayment dispatches to the appropriate payment protocol:
-//   - MPP when the client carries an MPP Authorization header and MPP is configured.
+//   - MPP when the client carries an MPP Authorization header, or when MPP is the
+//     only protocol configured for the route.
 //   - x402 otherwise (default).
 //
 // Returns the protocol name used, for logging.
 func (e *entry) runPayment(c *gin.Context) string {
+	if e.mpp != nil && (e.x402 == nil || c.GetHeader("Authorization") != "") {
+		e.mpp.Handle(c)
+		return protoMPP
+	}
 	if e.x402 != nil {
 		e.x402.Handle(c)
 		return protoX402
@@ -72,13 +78,21 @@ func (s *state) buildEntry(ctx context.Context, rule *rules.Rule, reqPath string
 	}
 
 	x402Channels := filterEnabledChannels(rule.PaymentChannels, protoX402)
-
 	if len(x402Channels) > 0 {
 		p, err := buildX402Protocol(ctx, rule, reqPath, x402Channels, s.facilCache)
 		if err != nil {
 			return nil, fmt.Errorf("build x402: %w", err)
 		}
 		e.x402 = p
+	}
+
+	mppChannels := filterEnabledChannels(rule.PaymentChannels, protoMPP)
+	if len(mppChannels) > 0 {
+		p, err := buildMPPProtocol(rule, reqPath, mppChannels)
+		if err != nil {
+			return nil, fmt.Errorf("build mpp: %w", err)
+		}
+		e.mpp = p
 	}
 
 	return e, nil
@@ -119,6 +133,7 @@ func buildUpstreamProxy(rule *rules.Rule, reqPath string) (*httputil.ReverseProx
 
 	return &httputil.ReverseProxy{
 		Director: func(r *http.Request) {
+			*r = *r.WithContext(withPublicOrigin(r.Context(), publicScheme(r), r.Host))
 			r.URL.Scheme = upURL.Scheme
 			r.URL.Host = upURL.Host
 			r.Host = upURL.Host
@@ -139,16 +154,76 @@ func buildUpstreamProxy(rule *rules.Rule, reqPath string) (*httputil.ReverseProx
 			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
-			if prefix != "" && resp.StatusCode >= 300 && resp.StatusCode < 400 {
-				if loc := resp.Header.Get("Location"); strings.HasPrefix(loc, "/") && !strings.HasPrefix(loc, prefix+"/") {
-					resp.Header.Set("Location", prefix+loc)
-				}
-			}
+			// x402 settlement header processing (applies to all responses).
 			scheme, _ := resp.Request.Context().Value(matchedRuleSchemeContextKey).(string)
 			applyUpstreamSettlementHeaders(resp.Header, scheme)
+
+			// Redirect rewriting (3xx only): preserve the gateway's project
+			// prefix and rewrite absolute redirects back to the upstream's own
+			// host into the gateway's public origin, so MPP clients -- which
+			// refuse to follow cross-origin redirects carrying payment
+			// credentials -- can still follow them.
+			if resp.StatusCode < 300 || resp.StatusCode >= 400 {
+				return nil
+			}
+			loc := resp.Header.Get("Location")
+			if loc == "" {
+				return nil
+			}
+			locURL, err := url.Parse(loc)
+			if err != nil {
+				return nil
+			}
+			if locURL.Host != "" && locURL.Host != upURL.Host {
+				return nil // redirect to an unrelated third-party host: leave untouched
+			}
+
+			changed := false
+			if locURL.Host == upURL.Host {
+				if pubScheme, pubHost, ok := publicOriginFromContext(resp.Request.Context()); ok {
+					locURL.Scheme = pubScheme
+					locURL.Host = pubHost
+					changed = true
+				}
+			}
+			if prefix != "" && !strings.HasPrefix(locURL.Path, prefix+"/") {
+				locURL.Path = prefix + locURL.Path
+				changed = true
+			}
+			if changed {
+				resp.Header.Set("Location", locURL.String())
+			}
 			return nil
 		},
 	}, nil
+}
+
+type publicOriginKey struct{}
+
+type publicOrigin struct {
+	scheme, host string
+}
+
+func withPublicOrigin(ctx context.Context, scheme, host string) context.Context {
+	return context.WithValue(ctx, publicOriginKey{}, publicOrigin{scheme: scheme, host: host})
+}
+
+func publicOriginFromContext(ctx context.Context) (scheme, host string, ok bool) {
+	o, ok := ctx.Value(publicOriginKey{}).(publicOrigin)
+	return o.scheme, o.host, ok
+}
+
+// publicScheme reports the scheme the client used to reach the gateway,
+// honouring X-Forwarded-Proto when the gateway sits behind a TLS-terminating
+// proxy (r.TLS is nil in that case).
+func publicScheme(r *http.Request) string {
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+		return proto
+	}
+	if r.TLS != nil {
+		return "https"
+	}
+	return "http"
 }
 
 func classifyUpstreamResult(statusCode int32, err error) (proxyStatus, string, string) {
