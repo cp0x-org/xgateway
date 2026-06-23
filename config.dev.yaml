@@ -69,7 +69,7 @@ outbound:
       description: "Current weather for a city — returns temperature, condition, and humidity"
       # This route accepts EITHER protocol. The gateway selects MPP when the client
       # sends an MPP `Authorization` header, and x402 otherwise.
-      payment_methods: ["mpp-tempo-charge" ]
+      payment_methods: [ "mpp-tempo-charge" ]
       bazaar:
         # ----- All supported BazaarConfig fields ---------------------------------
         disabled: false                                   # set true to skip Bazaar discovery for this route
