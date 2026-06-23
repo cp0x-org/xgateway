@@ -43,7 +43,7 @@ Before opening a PR:
 - Keep the diff focused. Don't include unrelated refactors or formatting changes.
 - Match the existing code style.
 - Add or update tests when you change behaviour. Tests should encode **why** behaviour matters, not just what it does.
-- Update [`README.md`](README.md) and [`config.example.yaml`](config.example.yaml) when you change user-visible configuration.
+- Update [`README.md`](README.md) and [`config.dev.yaml`](config.dev.yaml) when you change user-visible configuration.
 
 ## Payment protocol changes
 

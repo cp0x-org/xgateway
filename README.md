@@ -1,12 +1,16 @@
 # xgateway
 
-HTTP reverse proxy that enforces [x402](https://www.x402.org/) payment rules before forwarding requests to an upstream service.
+HTTP reverse proxy that enforces [x402](https://www.x402.org/) and MPP (Machine Payments Protocol) payment rules before forwarding requests to an upstream service.
 
 A request without a valid payment proof is answered with `HTTP 402` and the payment requirements. Once the client retries with a verified proof, the gateway settles the payment and proxies the request upstream.
 
 xgateway is used standalone or as the proxy component of the [xpaywall](https://github.com/cp0x-org/xpaywall) stack (where it is consumed as a Git submodule).
 
-> **Payment protocol support:** Only **x402** (`exact`) is shipped in the current build. Other schemes and protocols (e.g. `upto`, MPP, Tempo) are on the roadmap but not yet available.
+> **Payment protocol support (current build):**
+> - **x402** — `exact` (fixed price) and `upto` (settle by upstream-reported usage).
+> - **MPP** — Tempo `charge` (one-time on-chain charge) only. The `session` scheme and the `stripe` method are recognised in config but rejected during validation; they are not yet available.
+>
+> A single route may offer both protocols. The gateway uses MPP when the client sends an MPP `Authorization` header (or when MPP is the only channel on the route), and x402 otherwise.
 
 ---
 
@@ -18,7 +22,7 @@ Monetising an HTTP API usually means bolting on a billing system, issuing API ke
 - **No client signup, no keys to manage.** A caller does not need to register with you. They just hit the URL — xgateway answers `HTTP 402` with the payment requirements, the client pays on-chain and retries, and the request goes through. The contract between you and the caller is the route price.
 - **Drop it in front of any API.** Your upstream service does not need to know xgateway exists. Point the gateway at `http://your-api:port`, define which paths cost what, and the gateway handles payment verification, settlement, and proxying. No code change in the upstream.
 - **Per-route pricing and free paths.** Each route has its own price. Mark health checks or auth endpoints as `free: true` and they bypass payment entirely.
-- **Bring-your-own facilitator.** x402 settlement is delegated to a facilitator URL of your choice — run your own or use a public one. The gateway is not tied to any single provider.
+- **Multiple payment rails per route.** Each route can accept x402, MPP (Tempo), or both. x402 settlement is delegated to a facilitator URL of your choice — run your own or use a public one; MPP charges are verified against a Tempo RPC endpoint. The gateway is not tied to any single provider.
 - **Self-hosted, MIT-licensed, Go-native.** One static binary, one config file (or one control-api URL). Run it in Docker, on bare metal, behind your existing reverse proxy — wherever fits.
 
 ### Where it sits
@@ -84,21 +88,34 @@ Two configuration sources are supported, selected by the `CONFIG_PROVIDER` env v
 
 ### File config
 
-Copy [`config.example.yaml`](./config.example.yaml) to `config.yaml` and edit. The config has two top-level sections:
+Copy [`config.dev.yaml`](./config.dev.yaml) to `config.yaml` and edit. The config has three top-level sections — `x402` and `mpp` declare named payment channels, and `outbound` defines the upstream target and the routes that reference those channels.
 
 ```yaml
 # 1. x402 payment channels (one entry per facilitator / scheme).
 x402:
   - name: "x402-base-exact"
     facilitator_url: "https://x402.dexter.cash"
-    network: "eip155:84532"                  # CAIP-2
+    network: "eip155:84532"                  # Base Sepolia (CAIP-2)
     scheme: "exact"                          # exact | upto
     merchant: "0xEb6ae6fA22D307Eae06BE0862087FdFFdD25Bab4"
     asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    decimals: 6
     sync_facilitator_on_start: true
     timeout_seconds: 30
 
-# 2. Upstream target and the routes the gateway protects.
+# 2. MPP payment channels. Only the Tempo "charge" scheme is supported.
+mpp:
+  - name: "mpp-tempo-charge"
+    method: "tempo"                          # only "tempo" is supported
+    scheme: "charge"                         # only "charge" is supported ("session" is rejected)
+    rpc_url: "https://rpc.moderato.tempo.xyz"  # Tempo JSON-RPC endpoint
+    merchant: "0xb7Ac41661288791225d66643a7d952e551FC7868"
+    asset: "0x20c0000000000000000000000000000000000000"  # pathUSD (Tempo stablecoin)
+    decimals: 6                              # base-unit precision of route `price`
+    secret_key: "xgateway-dev-secret"        # HMAC key signing 402 challenges
+    timeout_seconds: 30
+
+# 3. Upstream target and the routes the gateway protects.
 outbound:
   target: "http://localhost:4021"
   allow_unmatched: false                     # true = proxy unmatched paths without payment
@@ -107,19 +124,28 @@ outbound:
     name: "Authorization"
     value: "Bearer YOUR_UPSTREAM_ACCESS_TOKEN"
   rules:
-    - name: "weather"
-      path: "/weather"
-      price: "$0.10"
-      payment_methods: ["x402-base-exact"]   # references x402[].name
+    - name: "weather"                        # accepts both rails: MPP when the client
+      path: "/weather"                       # sends an MPP Authorization header, else x402
+      price: "100000"                        # $0.10 in base units (6 decimals)
+      payment_methods: ["x402-base-exact", "mpp-tempo-charge"]
     - name: "metered-api"
       path: "/api/metered/*"
-      price: "$0.10"                         # maximum authorized amount for `upto` scheme
+      price: "100000"                        # maximum authorized amount for `upto` scheme
+      payment_methods: ["x402-base-exact"]
+    - name: "http-endpoint"                  # MPP-only route
+      path: "/http-endpoint"
+      price: "10000"                         # $0.01 in base units (6 decimals)
+      payment_methods: ["mpp-tempo-charge"]
     - name: "free-endpoint"
       path: "/free-endpoint"
       free: true
 ```
 
-Route paths support `*` glob suffixes. A rule with no `payment_methods` accepts every channel defined in `x402:`.
+Route paths support `*` glob suffixes. `payment_methods` references channels by their `name` in the `x402:` and `mpp:` sections; a rule with no `payment_methods` accepts every configured channel.
+
+`price` is expressed in the asset's **base units** (smallest indivisible unit), scaled by the channel's `decimals` — e.g. with `decimals: 6`, `"100000"` is `$0.10` and `"1000"` is `$0.001`. MPP requires this numeric form; do not use a `"$0.10"` dollar string.
+
+Paid x402 routes are also advertised via the x402 **Bazaar** discovery extension. A minimal declaration is auto-generated for each paid x402 rule; add a `bazaar:` block to a rule to publish a richer contract (input/output examples and JSON schemas). Bazaar applies to x402 only — MPP routes ignore it. See [`config.dev.yaml`](./config.dev.yaml) for a fully annotated `bazaar:` example.
 
 ## Docker
 

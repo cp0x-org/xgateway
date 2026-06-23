@@ -9,5 +9,5 @@ services:
     environment:
       PROXY_CONFIG: /app/config.yaml
     volumes:
-      - ./config.example.yaml:/app/config.yaml:ro
+      - ./config.dev.yaml:/app/config.yaml:ro
     restart: unless-stopped
