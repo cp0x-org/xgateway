@@ -78,7 +78,7 @@ type channelDTO struct {
 	Decimals        int32  `json:"decimals"`
 }
 
-// GetByInboundPath resolves a full inbound path (/{slug}/{path}) via the control-api.
+// GetByInboundPath resolves a full inbound path (/{username}/{slug}/{path}) via the control-api.
 func (p *HttpProvider) GetByInboundPath(ctx context.Context, inboundPath string) (*Rule, error) {
 	if !strings.HasPrefix(inboundPath, "/") {
 		inboundPath = "/" + inboundPath
