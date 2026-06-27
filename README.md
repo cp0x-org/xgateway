@@ -1,6 +1,6 @@
 # xgateway
 
-HTTP reverse proxy that enforces [x402](https://www.x402.org/) and MPP (Machine Payments Protocol) payment rules before forwarding requests to an upstream service.
+HTTP reverse proxy that enforces [x402](https://www.x402.org/) and [MPP](https://mpp.dev/) (Machine Payments Protocol) payment rules before forwarding requests to an upstream service.
 
 A request without a valid payment proof is answered with `HTTP 402` and the payment requirements. Once the client retries with a verified proof, the gateway settles the payment and proxies the request upstream.
 

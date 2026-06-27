@@ -21,7 +21,6 @@ It depends on:
 ## Prerequisites
 
 - Go 1.26+
-- `golangci-lint` on `$PATH`
 - Docker (for the `Dockerfile` build target)
 
 ## Building and running
@@ -47,13 +46,13 @@ Before opening a PR:
 
 ## Payment protocol changes
 
-If you touch x402 or add a new protocol:
+xgateway ships two protocols: **x402** (`protocol_x402.go`) and **MPP/Tempo** (`protocol_mpp.go`). The middleware chain is wired in `internal/proxy/router.go`.
 
-- Update `internal/config/config.go` and the schema validation.
-- Add a `ResolvedPaymentMethod` accessor and wire the middleware in `internal/proxy/payment.go`.
+If you touch a protocol or add a new one:
+
+- Update `internal/config/config.go` and its `Validate()` schema validation.
+- Add a `ResolvedPaymentMethod` accessor and wire the protocol into the middleware chain in `internal/proxy/router.go`.
 - Add tests covering both 402 generation and successful settlement.
-
-> Note: MPP / Tempo support is currently commented out and not shipped. If you re-enable it, ensure every commented block in `internal/config/config.go` and the proxy middleware is consistently restored.
 
 ## Commit messages
 
