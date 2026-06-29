@@ -27,7 +27,13 @@ import (
 const (
 	protoX402                   = "x402"
 	upstreamSettlementAmountKey = "X-X402-Settlement-Amount"
-	x402DefaultTimeout          = 30 * time.Second
+	// x402DefaultTimeout is the fallback verify/request deadline; overridable via
+	// X402_TIMEOUT (see config.GatewayConfig / WithX402Timeouts).
+	x402DefaultTimeout = 30 * time.Second
+	// x402DefaultSettleTimeout is the fallback on-chain settlement deadline, which
+	// can be much slower than verify (e.g. Base mainnet may take well over 30s).
+	// Overridable via X402_SETTLE_TIMEOUT.
+	x402DefaultSettleTimeout = 120 * time.Second
 )
 
 type requestContextKey string
@@ -69,21 +75,26 @@ func truncateIfNotJSON(data []byte) string {
 	return s
 }
 
-func facilitatorHTTPClient() *http.Client {
+func facilitatorHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
-		Timeout:   x402DefaultTimeout,
+		// Sized for the slowest call (settle); verify still returns quickly.
+		Timeout:   timeout,
 		Transport: &facilitatorLoggingTransport{},
 	}
 }
 
 // facilitatorCache memoises x402 facilitator clients keyed by URL.
 type facilitatorCache struct {
-	mu sync.RWMutex
-	m  map[string]x402.FacilitatorClient
+	mu          sync.RWMutex
+	m           map[string]x402.FacilitatorClient
+	httpTimeout time.Duration
 }
 
-func newFacilitatorCache() *facilitatorCache {
-	return &facilitatorCache{m: make(map[string]x402.FacilitatorClient)}
+func newFacilitatorCache(httpTimeout time.Duration) *facilitatorCache {
+	return &facilitatorCache{
+		m:           make(map[string]x402.FacilitatorClient),
+		httpTimeout: httpTimeout,
+	}
 }
 
 func (f *facilitatorCache) get(url string) x402.FacilitatorClient {
@@ -95,7 +106,7 @@ func (f *facilitatorCache) get(url string) x402.FacilitatorClient {
 	}
 	fac = x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
 		URL:        url,
-		HTTPClient: facilitatorHTTPClient(),
+		HTTPClient: facilitatorHTTPClient(f.httpTimeout),
 	})
 	f.mu.Lock()
 	f.m[url] = fac
@@ -107,7 +118,9 @@ func (f *facilitatorCache) get(url string) x402.FacilitatorClient {
 
 // x402Protocol handles payment verification for one route using the x402 protocol.
 type x402Protocol struct {
-	srv *x402http.HTTPServer
+	srv       *x402http.HTTPServer
+	timeout   time.Duration // verify + per-request deadline
+	settleTTL time.Duration // on-chain settlement deadline
 }
 
 func (p *x402Protocol) Handle(c *gin.Context) {
@@ -128,7 +141,7 @@ func (p *x402Protocol) Handle(c *gin.Context) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), x402DefaultTimeout)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), p.timeout)
 	defer cancel()
 
 	result := p.srv.ProcessHTTPRequest(ctx, reqCtx, nil)
@@ -143,7 +156,7 @@ func (p *x402Protocol) Handle(c *gin.Context) {
 		writeX402Error(c, result.Response)
 	case x402http.ResultPaymentVerified:
 		log.Printf("[x402] payment verified, proceeding to upstream")
-		handleX402Verified(c, p.srv, ctx, reqCtx, result)
+		handleX402Verified(c, p.srv, ctx, reqCtx, result, p.settleTTL)
 	}
 }
 
@@ -158,6 +171,7 @@ func buildX402Protocol(
 	reqPath string,
 	channels []*rules.PaymentChannel,
 	cache *facilitatorCache,
+	timeout, settleTTL time.Duration,
 ) (*x402Protocol, error) {
 	options := make(x402http.PaymentOptions, 0, len(channels))
 	for _, ch := range channels {
@@ -218,12 +232,12 @@ func buildX402Protocol(
 		}
 	}
 
-	initCtx, cancel := context.WithTimeout(ctx, x402DefaultTimeout)
+	initCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if err := srv.Initialize(initCtx); err != nil {
 		return nil, fmt.Errorf("initialize x402 server: %w", err)
 	}
-	return &x402Protocol{srv: srv}, nil
+	return &x402Protocol{srv: srv, timeout: timeout, settleTTL: settleTTL}, nil
 }
 
 // ---------- x402 runtime helpers ---------------------------------------------
@@ -251,6 +265,7 @@ func handleX402Verified(
 	ctx context.Context,
 	reqCtx x402http.HTTPRequestContext,
 	result x402http.HTTPProcessResult,
+	settleTTL time.Duration,
 ) {
 	writer := &responseCapture{
 		ResponseWriter: c.Writer,
@@ -272,8 +287,13 @@ func handleX402Verified(
 	}
 
 	log.Printf("[x402] running settlement, upstream status=%d", writer.statusCode)
+	// Settlement gets its own, longer deadline: the upstream has already served and
+	// the payment is authorised, so on-chain settlement must not be bounded by the
+	// per-request timeout already (partially) consumed by verify + upstream.
+	settleCtx, cancelSettle := context.WithTimeout(context.WithoutCancel(ctx), settleTTL)
+	defer cancelSettle()
 	settleResult := server.ProcessSettlement(
-		ctx,
+		settleCtx,
 		*result.PaymentPayload,
 		*result.PaymentRequirements,
 		nil,

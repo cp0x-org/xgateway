@@ -79,7 +79,7 @@ func (s *state) buildEntry(ctx context.Context, rule *rules.Rule, reqPath string
 
 	x402Channels := filterEnabledChannels(rule.PaymentChannels, protoX402)
 	if len(x402Channels) > 0 {
-		p, err := buildX402Protocol(ctx, rule, reqPath, x402Channels, s.facilCache)
+		p, err := buildX402Protocol(ctx, rule, reqPath, x402Channels, s.facilCache, s.x402Timeout, s.settleTTL)
 		if err != nil {
 			return nil, fmt.Errorf("build x402: %w", err)
 		}

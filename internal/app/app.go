@@ -56,7 +56,10 @@ func run(ctx context.Context, serviceCfg *appconfig.GatewayConfig) error {
 		return err
 	}
 
-	opts = append(opts, proxy.WithDebug(serviceCfg.Debug))
+	opts = append(opts,
+		proxy.WithDebug(serviceCfg.Debug),
+		proxy.WithX402Timeouts(serviceCfg.X402Timeout, serviceCfg.X402SettleTimeout),
+	)
 	srv, err := proxy.New(provider, opts...)
 	if err != nil {
 		return err

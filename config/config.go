@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/caarlos0/env/v11"
 	"github.com/joho/godotenv"
@@ -27,6 +28,13 @@ type GatewayConfig struct {
 	// Required when CONFIG_PROVIDER=http
 	ControlAPIURL  string `env:"CONTROL_API_URL"`
 	InternalAPIKey string `env:"INTERNAL_API_KEY"`
+
+	// x402 facilitator timeouts.
+	//   X402_TIMEOUT         — verify + per-request deadline (fast call)
+	//   X402_SETTLE_TIMEOUT  — on-chain settlement deadline; mainnet settlement
+	//                          can take far longer than verify, so it is separate.
+	X402Timeout       time.Duration `env:"X402_TIMEOUT" envDefault:"30s"`
+	X402SettleTimeout time.Duration `env:"X402_SETTLE_TIMEOUT" envDefault:"120s"`
 }
 
 func NewGatewayConfig() (*GatewayConfig, error) {

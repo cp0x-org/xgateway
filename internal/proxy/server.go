@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"time"
 
 	"github.com/cp0x-org/xpaywall/xgateway/internal/config"
 	"github.com/cp0x-org/xpaywall/xgateway/internal/logger"
@@ -18,9 +19,11 @@ type Server struct {
 }
 
 type serverOptions struct {
-	fallback http.Handler
-	logger   *logger.Client
-	debug    bool
+	fallback      http.Handler
+	logger        *logger.Client
+	debug         bool
+	x402Timeout   time.Duration
+	x402SettleTTL time.Duration
 }
 
 // Option configures a Server.
@@ -42,6 +45,15 @@ func WithDebug(debug bool) Option {
 	return func(o *serverOptions) { o.debug = debug }
 }
 
+// WithX402Timeouts overrides the x402 verify/request deadline and the (longer)
+// on-chain settlement deadline. Non-positive values fall back to the defaults.
+func WithX402Timeouts(request, settle time.Duration) Option {
+	return func(o *serverOptions) {
+		o.x402Timeout = request
+		o.x402SettleTTL = settle
+	}
+}
+
 // New creates a proxy server backed by the given provider.
 // Rules are resolved per-request and cached after the first lookup.
 func New(provider rules.Provider, opts ...Option) (*Server, error) {
@@ -55,7 +67,13 @@ func New(provider rules.Provider, opts ...Option) (*Server, error) {
 	if o.logger == nil {
 		o.logger = logger.New("", "") // no-op client
 	}
-	st := newState(provider, o.fallback, o.logger, o.debug)
+	if o.x402Timeout <= 0 {
+		o.x402Timeout = x402DefaultTimeout
+	}
+	if o.x402SettleTTL <= 0 {
+		o.x402SettleTTL = x402DefaultSettleTimeout
+	}
+	st := newState(provider, o.fallback, o.logger, o.debug, o.x402Timeout, o.x402SettleTTL)
 	return &Server{handler: st.buildRouter()}, nil
 }
 

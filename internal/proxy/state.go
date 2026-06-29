@@ -13,12 +13,14 @@ import (
 
 // state holds shared per-Server resources used across the request lifecycle.
 type state struct {
-	provider   rules.Provider
-	fallback   http.Handler
-	logger     *logger.Client
-	facilCache *facilitatorCache
-	startedAt  time.Time
-	debug      bool
+	provider    rules.Provider
+	fallback    http.Handler
+	logger      *logger.Client
+	facilCache  *facilitatorCache
+	startedAt   time.Time
+	debug       bool
+	x402Timeout time.Duration
+	settleTTL   time.Duration
 
 	mu         sync.RWMutex
 	routeCache map[string]*entry
@@ -26,15 +28,23 @@ type state struct {
 	pendingLogs sync.Map // logFingerprint → pendingLogEntry
 }
 
-func newState(provider rules.Provider, fallback http.Handler, lg *logger.Client, debug bool) *state {
+func newState(
+	provider rules.Provider,
+	fallback http.Handler,
+	lg *logger.Client,
+	debug bool,
+	x402Timeout, settleTTL time.Duration,
+) *state {
 	return &state{
-		provider:   provider,
-		fallback:   fallback,
-		logger:     lg,
-		facilCache: newFacilitatorCache(),
-		startedAt:  time.Now(),
-		debug:      debug,
-		routeCache: make(map[string]*entry),
+		provider:    provider,
+		fallback:    fallback,
+		logger:      lg,
+		facilCache:  newFacilitatorCache(settleTTL),
+		startedAt:   time.Now(),
+		debug:       debug,
+		x402Timeout: x402Timeout,
+		settleTTL:   settleTTL,
+		routeCache:  make(map[string]*entry),
 	}
 }
 
